@@ -150,6 +150,11 @@ ENABLE_LORA = False
 RANK = 64
 ALPHA = 64.0
 
+if os.environ.get("JAX_PLATFORMS") == "proxy":
+  import pathwaysutils
+  pathwaysutils.initialize()
+
+
 # ====== Sharding ======
 if "Qwen2.5-0.5B-Instruct" in args.model_version:
   TOTAL_TPU_TO_USE = 2
@@ -158,7 +163,7 @@ elif "Qwen2.5-7B-Instruct" in args.model_version:
 else:
   TOTAL_TPU_TO_USE = jax.device_count()
 
-MESH = [(1, TOTAL_TPU_TO_USE), ("fsdp", "tp")]  # YY
+MESH = [(1, TOTAL_TPU_TO_USE // 2), ("fsdp", "tp")]  # YY
 
 # ====== GRPO ======
 # === Generation during GRPO training ===
@@ -188,7 +193,7 @@ EPSILON = 0.2
 # ====== Training ======
 # 2 is the max we can do on v5e-8 with llama3 8B model.
 # 4 is the max we can do on v5e-8 with llama3 1B model.
-TRAIN_MICRO_BATCH_SIZE = 4
+TRAIN_MICRO_BATCH_SIZE = len(jax.devices())
 # To speed up for quick workflow validation, we can change NUM_BATCHES to e.g. 2
 NUM_BATCHES = args.num_batches
 # Keep `NUM_TEST_BATCHES` low so that evaluation runs quickly. It can be
@@ -367,6 +372,8 @@ MODEL_CONFIG = {
     "meta-llama/Llama-3.2-1B-Instruct": llama_lib.ModelConfig.llama3_2_1b,
     "meta-llama/Llama-3.2-3B-Instruct": llama_lib.ModelConfig.llama3_2_3b,
     "meta-llama/Llama-3.1-8B-Instruct": llama_lib.ModelConfig.llama3_1_8b,
+    "meta-llama/Llama-3.1-70B-Instruct": llama_lib.ModelConfig.llama3_70b,
+    "meta-llama/Llama-3.1-405B-Instruct": llama_lib.ModelConfig.llama3_405b,
     "Qwen/Qwen2.5-0.5B-Instruct": qwen2_lib.ModelConfig.qwen2_5_0_5b,
     "Qwen/Qwen2.5-7B-Instruct": qwen2_lib.ModelConfig.qwen2_5_7b,
 }
@@ -388,7 +395,7 @@ def get_trainer_model(ckpt_path, model_mesh, ref_model_config):
 
 def get_ref_model():
   ckpt_path = os.path.join(NNX_CKPT_DIR)
-  model_mesh = jax.make_mesh(*MESH, devices=jax.devices()[:TOTAL_TPU_TO_USE])
+  model_mesh = jax.make_mesh(*MESH, devices=jax.devices()[:TOTAL_TPU_TO_USE // 2])
   ref_model_config = MODEL_CONFIG[HF_MODEL_VERSION]()
   model = get_trainer_model(ckpt_path, model_mesh, ref_model_config)
   return model, model_mesh, ref_model_config
@@ -762,12 +769,16 @@ if MAX_GRAD_NORM is not None:
       optimizer,
   )
 
+
+rollout_mesh = jax.make_mesh(*MESH, devices=jax.devices()[TOTAL_TPU_TO_USE // 2:])
+print(f"{rollout_mesh=}")
+
 # Training config
 cluster_config = rl_cluster_lib.ClusterConfig(
     role_to_mesh={
         rl_cluster_lib.Role.ACTOR: mesh,
         rl_cluster_lib.Role.REFERENCE: mesh,
-        rl_cluster_lib.Role.ROLLOUT: mesh,
+        rl_cluster_lib.Role.ROLLOUT: rollout_mesh,
     },
     rollout_engine=args.rollout_engine,
     offload_to_cpu=False,
