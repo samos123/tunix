@@ -193,7 +193,7 @@ EPSILON = 0.2
 # ====== Training ======
 # 2 is the max we can do on v5e-8 with llama3 8B model.
 # 4 is the max we can do on v5e-8 with llama3 1B model.
-TRAIN_MICRO_BATCH_SIZE = len(jax.devices())
+TRAIN_MICRO_BATCH_SIZE = len(jax.devices()) // 2
 # To speed up for quick workflow validation, we can change NUM_BATCHES to e.g. 2
 NUM_BATCHES = args.num_batches
 # Keep `NUM_TEST_BATCHES` low so that evaluation runs quickly. It can be
