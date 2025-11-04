@@ -33,6 +33,7 @@ from absl import logging
 from flax import nnx
 import grain
 import jax
+import jax.experimental.mesh_utils as mesh_utils
 import optax
 from orbax import checkpoint as ocp
 import qwix
@@ -163,7 +164,12 @@ elif "Qwen2.5-7B-Instruct" in args.model_version:
 else:
   TOTAL_TPU_TO_USE = jax.device_count()
 
-MESH = [(1, TOTAL_TPU_TO_USE // 2), ("fsdp", "tp")]  # YY
+TRAINER_DEVICES = jax.devices()[:TOTAL_TPU_TO_USE // 2]
+INFERENCE_DEVICES = jax.devices()[TOTAL_TPU_TO_USE // 2:]
+
+INFERENCE_MESH = [(4, len(INFERENCE_DEVICES) // 4), ("fsdp", "tp")]
+TRAINER_MESH = [(len(TRAINER_DEVICES) // 4, 4), ("fsdp", "tp")]
+
 
 # ====== GRPO ======
 # === Generation during GRPO training ===
@@ -395,9 +401,21 @@ def get_trainer_model(ckpt_path, model_mesh, ref_model_config):
   )
 
 
+rollout_mesh = jax.make_mesh(*INFERENCE_MESH, devices=INFERENCE_DEVICES)
+print(f"{rollout_mesh=}")
+
+
 def get_ref_model():
   ckpt_path = os.path.join(NNX_CKPT_DIR)
-  model_mesh = jax.make_mesh(*MESH, devices=jax.devices()[:TOTAL_TPU_TO_USE // 2])
+  # model_mesh = jax.make_mesh(*TRAINER_MESH, devices=TRAINER_DEVICES)
+  print(TRAINER_DEVICES[0].device_kind)
+  trainer_devices = mesh_utils.create_device_mesh(
+    TRAINER_MESH[0],
+    devices=TRAINER_DEVICES,
+    allow_split_physical_axes=True
+  )
+  model_mesh = jax.sharding.Mesh(trainer_devices, TRAINER_MESH[1])
+  print(f"{model_mesh=}")
   ref_model_config = MODEL_CONFIG[HF_MODEL_VERSION]()
   model = get_trainer_model(ckpt_path, model_mesh, ref_model_config)
   return model, model_mesh, ref_model_config
@@ -772,8 +790,6 @@ if MAX_GRAD_NORM is not None:
   )
 
 
-rollout_mesh = jax.make_mesh(*MESH, devices=jax.devices()[TOTAL_TPU_TO_USE // 2:])
-print(f"{rollout_mesh=}")
 
 # Training config
 cluster_config = rl_cluster_lib.ClusterConfig(
