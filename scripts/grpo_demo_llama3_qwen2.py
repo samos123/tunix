@@ -167,13 +167,13 @@ else:
 TRAINER_DEVICES = jax.devices()[:TOTAL_TPU_TO_USE // 2]
 INFERENCE_DEVICES = jax.devices()[TOTAL_TPU_TO_USE // 2:]
 
-INFERENCE_MESH = [(1, len(INFERENCE_DEVICES)), ("fsdp", "tp")]
-TRAINER_MESH = [(1, len(TRAINER_DEVICES)), ("fsdp", "tp")]
+INFERENCE_MESH = [(4, len(INFERENCE_DEVICES) // 4), ("fsdp", "tp")]
+TRAINER_MESH = [(len(TRAINER_DEVICES) // 4, 4), ("fsdp", "tp")]
 
 
 # ====== GRPO ======
 # === Generation during GRPO training ===
-MAX_PROMPT_LENGTH = 1024
+MAX_PROMPT_LENGTH = 256
 TOTAL_GENERATION_STEPS = 1024  # YY 768
 # Important to keep a high-ish temperature for varied, diverse responses during
 # training.
@@ -201,7 +201,7 @@ EPSILON = 0.2
 # 4 is the max we can do on v5e-8 with llama3 1B model.
 GLOBAL_BATCH_SIZE = len(jax.devices())
 MINI_BATCH_SIZE = GLOBAL_BATCH_SIZE
-TRAIN_MICRO_BATCH_SIZE = GLOBAL_BATCH_SIZE
+TRAIN_MICRO_BATCH_SIZE = GLOBAL_BATCH_SIZE // 2
 # To speed up for quick workflow validation, we can change NUM_BATCHES to e.g. 2
 NUM_BATCHES = min(args.num_batches, 7473 // GLOBAL_BATCH_SIZE)
 # Keep `NUM_TEST_BATCHES` low so that evaluation runs quickly. It can be
