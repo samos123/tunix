@@ -189,6 +189,11 @@ ENABLE_LORA = False
 RANK = 64
 ALPHA = 64.0
 
+if os.environ.get("JAX_PLATFORMS") == "proxy":
+  import pathwaysutils
+  pathwaysutils.initialize()
+
+
 # ====== Sharding ======
 if "Qwen2.5-0.5B-Instruct" in args.model_version:
   TOTAL_TPU_TO_USE = 2
@@ -197,7 +202,20 @@ elif "Qwen2.5-7B-Instruct" in args.model_version:
 else:
   TOTAL_TPU_TO_USE = jax.device_count()
 
-MESH = [(args.rollout_data_parallel_size, TOTAL_TPU_TO_USE // args.rollout_data_parallel_size), ("fsdp", "tp")]
+
+if TOTAL_TPU_TO_USE >= 16:
+  TRAINER_DEVICES = jax.devices()[:TOTAL_TPU_TO_USE // 2]
+  INFERENCE_DEVICES = jax.devices()[TOTAL_TPU_TO_USE // 2:]
+
+  INFERENCE_MESH = [(len(INFERENCE_DEVICES) // 8, 8), ("fsdp", "tp")]
+  TRAINER_MESH = [(len(TRAINER_DEVICES), 1), ("fsdp", "tp")]
+else:
+  MESH = [(args.rollout_data_parallel_size, TOTAL_TPU_TO_USE // args.rollout_data_parallel_size), ("fsdp", "tp")]
+  INFERENCE_MESH = MESH
+  TRAINER_MESH = MESH
+  TRAINER_DEVICES = jax.devices()
+  INFERENCE_DEVICES = jax.devices()
+
 
 # ====== GRPO ======
 # === Generation during GRPO training ===
@@ -428,10 +446,11 @@ def get_trainer_model(ckpt_path, model_mesh, ref_model_config):
       f"{HF_MODEL_VERSION} tensor loading not implemented"
   )
 
+rollout_mesh = jax.make_mesh(*INFERENCE_MESH, devices=INFERENCE_DEVICES)
 
 def get_ref_model():
   ckpt_path = os.path.join(NNX_CKPT_DIR)
-  model_mesh = jax.make_mesh(*MESH, devices=jax.devices()[:TOTAL_TPU_TO_USE])
+  model_mesh = jax.make_mesh(*TRAINER_MESH, devices=TRAINER_DEVICES)
   ref_model_config = MODEL_CONFIG[HF_MODEL_VERSION]()
   model = get_trainer_model(ckpt_path, model_mesh, ref_model_config)
   return model, model_mesh, ref_model_config
@@ -810,7 +829,7 @@ cluster_config = rl_cluster_lib.ClusterConfig(
     role_to_mesh={
         rl_cluster_lib.Role.ACTOR: mesh,
         rl_cluster_lib.Role.REFERENCE: mesh,
-        rl_cluster_lib.Role.ROLLOUT: mesh,
+        rl_cluster_lib.Role.ROLLOUT: rollout_mesh,
     },
     rollout_engine=args.rollout_engine,
     offload_to_cpu=False,
@@ -833,8 +852,8 @@ cluster_config = rl_cluster_lib.ClusterConfig(
         temperature=TEMPERATURE,
         top_p=TOP_P,
         top_k=TOP_K,
-        data_parallel_size=MESH[0][0],
-        tensor_parallel_size=MESH[0][1],
+        data_parallel_size=INFERENCE_MESH[0][0],
+        tensor_parallel_size=INFERENCE_MESH[0][1],
         rollout_vllm_model_version=VLLM_MODEL_VERSION,
         rollout_vllm_hbm_utilization=0.2,
         rollout_vllm_tpu_backend_type="jax",
