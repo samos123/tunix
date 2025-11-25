@@ -167,8 +167,8 @@ else:
 TRAINER_DEVICES = jax.devices()[:TOTAL_TPU_TO_USE // 2]
 INFERENCE_DEVICES = jax.devices()[TOTAL_TPU_TO_USE // 2:]
 
-INFERENCE_MESH = [(4, len(INFERENCE_DEVICES) // 4), ("fsdp", "tp")]
-TRAINER_MESH = [(len(TRAINER_DEVICES) // 4, 4), ("fsdp", "tp")]
+INFERENCE_MESH = [(len(INFERENCE_DEVICES) // 8, 8), ("fsdp", "tp")]
+TRAINER_MESH = [(len(TRAINER_DEVICES), 1), ("fsdp", "tp")]
 
 
 # ====== GRPO ======
